@@ -3,7 +3,6 @@
 Aivora is a **modern full-stack AI SaaS platform** built using the **MERN stack**, designed for **real-world SaaS deployment**, scalability, and secure AI-powered services.
 It combines a clean frontend experience with a robust, production-ready backend architecture.
 
-(＾▽＾)
 
 ---
 
