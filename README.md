@@ -1,8 +1,3 @@
-Got it 👍
-Here is your **cleaned and professional README**, rewritten to **remove emojis**, using **bullet points + kaomojis only**, while keeping it **attractive, SaaS-ready, and GitHub-friendly**.
-
----
-
 # Aivora – AI SaaS Application
 
 Aivora is a **modern full-stack AI SaaS platform** built using the **MERN stack**, designed for **real-world SaaS deployment**, scalability, and secure AI-powered services.
