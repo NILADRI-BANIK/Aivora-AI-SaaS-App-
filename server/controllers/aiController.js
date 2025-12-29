@@ -6,6 +6,7 @@ import { v2 as cloudinary } from "cloudinary";
 import connectCloudinary from "../configs/cloudinary.js";
 import fs from "fs";
 import { createRequire } from "module";
+import Replicate from "replicate";
 
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
@@ -155,7 +156,9 @@ Write the article now:`;
       content = truncated.trim() || words.slice(0, maxWords).join(" ");
     }
 
-    const finalWordCount = content.split(/\s+/).filter((w) => w.length > 0).length;
+    const finalWordCount = content
+      .split(/\s+/)
+      .filter((w) => w.length > 0).length;
     console.log("Final content length:", content.length);
     console.log("Final word count:", finalWordCount);
 
@@ -294,6 +297,85 @@ Keyword: ${prompt}
   }
 };
 
+// export const generateImage = async (req, res) => {
+//   try {
+//     const { userId } = req.auth();
+//     const { prompt, publish } = req.body;
+//     const plan = req.plan;
+
+//     // Validate prompt
+//     if (!prompt || prompt.trim() === "") {
+//       return res.status(400).json({
+//         success: false,
+//         message: "Prompt cannot be empty",
+//       });
+//     }
+
+//     // Check premium plan
+//     if (plan !== "premium") {
+//       return res.status(403).json({
+//         success: false,
+//         message: "This feature is only available for premium subscription.",
+//       });
+//     }
+
+//     console.log("🎨 Generating image for prompt:", prompt);
+
+//     // Generate image URL using Pollinations.ai (FREE - No API key needed!)
+//     const seed = Date.now(); // Unique seed for different results each time
+//     const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+//       prompt
+//     )}?width=1024&height=1024&nologo=true&seed=${seed}`;
+
+//     console.log("🔗 Image URL generated:", imageUrl);
+//     console.log("☁️ Uploading to Cloudinary...");
+
+//     // Upload to Cloudinary directly from URL
+//     const uploadResult = await cloudinary.uploader.upload(imageUrl, {
+//       folder: "ai-generated-images",
+//       resource_type: "image",
+//       timeout: 120000, // 2 minutes timeout for image generation + upload
+//     });
+
+//     console.log(" Uploaded to Cloudinary:", uploadResult.secure_url);
+
+//     // Save to database
+//     await sql`
+//       INSERT INTO creations (user_id, prompt, content, type, publish)
+//       VALUES (${userId}, ${prompt}, ${uploadResult.secure_url}, 'image', ${
+//       publish ?? false
+//     })
+//     `;
+
+//     console.log(" Saved to database");
+
+//     res.json({
+//       success: true,
+//       content: uploadResult.secure_url,
+//     });
+//   } catch (error) {
+//     console.error("❌ Error in generateImage:", error.message);
+
+//     // Handle Cloudinary errors
+//     if (error.message?.includes("cloudinary") || error.http_code) {
+//       return res.status(500).json({
+//         success: false,
+//         message: "Failed to upload image to cloud storage.",
+//         error: error.message,
+//       });
+//     }
+
+//     // Generic error
+//     res.status(500).json({
+//       success: false,
+//       message: "Failed to generate image. Please try again.",
+//       error: error.message,
+//     });
+//   }
+// };
+
+// Line 211-230: removeImageBackground function
+
 export const generateImage = async (req, res) => {
   try {
     const { userId } = req.auth();
@@ -318,25 +400,98 @@ export const generateImage = async (req, res) => {
 
     console.log("🎨 Generating image for prompt:", prompt);
 
-    // Generate image URL using Pollinations.ai (FREE - No API key needed!)
-    const seed = Date.now(); // Unique seed for different results each time
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-      prompt
-    )}?width=1024&height=1024&nologo=true&seed=${seed}`;
+    let imageUrl = null;
+    let method = null;
 
-    console.log("🔗 Image URL generated:", imageUrl);
-    console.log("☁️ Uploading to Cloudinary...");
+    // ========================================
+    // METHOD 1: Try Pollinations.ai FIRST (FREE)
+    // ========================================
+    try {
+      console.log("🔄 Trying Pollinations.ai (free, unlimited)...");
 
-    // Upload to Cloudinary directly from URL
+      const seed = Date.now();
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+        prompt
+      )}?width=1024&height=1024&nologo=true&seed=${seed}`;
+
+      // Test if Pollinations URL is accessible (with timeout)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+      try {
+        const testResponse = await fetch(pollinationsUrl, {
+          method: "HEAD",
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        if (testResponse.ok) {
+          imageUrl = pollinationsUrl;
+          method = "Pollinations.ai";
+          console.log("✅ Pollinations.ai SUCCESS!");
+        } else {
+          throw new Error(`Pollinations returned ${testResponse.status}`);
+        }
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        throw fetchError;
+      }
+    } catch (pollinationsError) {
+      console.log("⚠️ Pollinations.ai FAILED:", pollinationsError.message);
+      console.log("🔄 Falling back to Replicate...");
+
+      // ========================================
+      // METHOD 2: Fallback to Replicate (RELIABLE)
+      // ========================================
+      try {
+        if (!process.env.REPLICATE_API_TOKEN) {
+          throw new Error("Replicate API token not configured");
+        }
+
+        const replicate = new Replicate({
+          auth: process.env.REPLICATE_API_TOKEN,
+        });
+
+        console.log("🔄 Generating with Replicate...");
+
+        const output = await replicate.run(
+          "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
+          {
+            input: {
+              prompt: prompt,
+              width: 1024,
+              height: 1024,
+            },
+          }
+        );
+
+        imageUrl = output[0];
+        method = "Replicate";
+        console.log("✅ Replicate SUCCESS!");
+      } catch (replicateError) {
+        console.error("❌ Replicate FAILED:", replicateError.message);
+        throw new Error(
+          "Both Pollinations and Replicate failed. Please try again later."
+        );
+      }
+    }
+
+    // ========================================
+    // Upload to Cloudinary
+    // ========================================
+    console.log(`☁️ Uploading to Cloudinary (from ${method})...`);
+
     const uploadResult = await cloudinary.uploader.upload(imageUrl, {
       folder: "ai-generated-images",
       resource_type: "image",
-      timeout: 120000, // 2 minutes timeout for image generation + upload
+      timeout: 120000,
     });
 
-    console.log(" Uploaded to Cloudinary:", uploadResult.secure_url);
+    console.log("✅ Uploaded to Cloudinary:", uploadResult.secure_url);
 
-    // Save to database
+    // ========================================
+    // Save to Database
+    // ========================================
     await sql`
       INSERT INTO creations (user_id, prompt, content, type, publish)
       VALUES (${userId}, ${prompt}, ${uploadResult.secure_url}, 'image', ${
@@ -344,11 +499,12 @@ export const generateImage = async (req, res) => {
     })
     `;
 
-    console.log(" Saved to database");
+    console.log("✅ Saved to database");
 
     res.json({
       success: true,
       content: uploadResult.secure_url,
+      method: method, // Let user know which method was used
     });
   } catch (error) {
     console.error("❌ Error in generateImage:", error.message);
@@ -371,7 +527,6 @@ export const generateImage = async (req, res) => {
   }
 };
 
-// Line 211-230: removeImageBackground function
 export const removeImageBackground = async (req, res) => {
   try {
     const { userId } = req.auth();
@@ -543,7 +698,10 @@ Use clear markdown formatting.
         max_tokens: 1500,
       });
     } catch (aiError) {
-      console.error("Groq AI Error:", aiError?.error || aiError?.message || aiError);
+      console.error(
+        "Groq AI Error:",
+        aiError?.error || aiError?.message || aiError
+      );
       return res.json({
         success: false,
         message: "AI resume review failed. Please try again.",
